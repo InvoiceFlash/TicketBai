@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<modification>
+	<id>ticketbai_modulo</id>
+	<version>1.0.0</version>
+	<vqmver>2.5.1</vqmver>
+	<author>InvoiceFlash</author>
+
+	<!-- Ventas > TicketBAI + autoinstalacion de la tabla tbai_invoice y de los permisos
+	     del grupo 1. -->
+	<file name="admin/controller/common/header.php">
+		<operation error="skip">
+			<search position="before"><![CDATA[if ($sales) {]]></search>
+			<add><![CDATA[
+			// TicketBAI (modulo TicketBai): autoinstalacion idempotente
+			try {
+				$this->load->model('ticketbai/ticketbai');
+				$this->model_ticketbai_ticketbai->install();
+
+				$ticketbai_group = $this->db->query("SELECT permission FROM `" . DB_PREFIX . "user_group` WHERE user_group_id = 1");
+
+				if ($ticketbai_group->num_rows) {
+					$ticketbai_perm = unserialize($ticketbai_group->row['permission']);
+
+					if (is_array($ticketbai_perm) && isset($ticketbai_perm['access']) && isset($ticketbai_perm['modify'])) {
+						$ticketbai_perm_changed = false;
+
+						foreach (array('access', 'modify') as $ticketbai_type) {
+							if (!in_array('ticketbai/ticketbai', $ticketbai_perm[$ticketbai_type])) {
+								$ticketbai_perm[$ticketbai_type][] = 'ticketbai/ticketbai';
+								$ticketbai_perm_changed = true;
+							}
+						}
+
+						if ($ticketbai_perm_changed) {
+							$this->db->query("UPDATE `" . DB_PREFIX . "user_group` SET permission = '" . $this->db->escape(serialize($ticketbai_perm)) . "' WHERE user_group_id = 1");
+						}
+					}
+				}
+			} catch (Exception $ticketbai_install_exception) {
+				// No interrumpir la carga del admin; se reintenta en la siguiente carga.
+			}
+
+			if ($this->user->hasPermission('access', 'ticketbai/ticketbai')) {
+				$sales[] = array(
+					'name' => $this->language->get('text_ticketbai'),
+					'href' => $this->url->link('ticketbai/ticketbai', 'token=' . $this->session->data['token'], 'SSL'),
+					'children' => array()
+				);
+			}
+
+			]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/language/es_ES/common/header.php">
+		<operation error="skip">
+			<search position="after"><![CDATA[// Text]]></search>
+			<add><![CDATA[
+$_['text_ticketbai'] = 'TicketBAI';
+]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/language/en-gb/common/header.php">
+		<operation error="skip">
+			<search position="after"><![CDATA[// Text]]></search>
+			<add><![CDATA[
+$_['text_ticketbai'] = 'TicketBAI';
+]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/controller/sale/invoice.php">
+		<!-- Con TicketBAI activo, el envio automatico (alta de factura, draft y albaran
+		     convertidos, boton de reenvio de la pestana AEAT) va a la Hacienda Foral. -->
+		<operation error="skip">
+			<search position="before"><![CDATA[public function autoSendAeat($invoice_id) {]]></search>
+			<add><![CDATA[	// TicketBAI (modulo TicketBai): firma y envio a la Hacienda Foral. $rectified_invoice_id > 0
+	// la emite como rectificativa de esa factura.
+	public function ticketbaiSend($invoice_id, $rectified_invoice_id = 0) {
+		$this->load->model('sale/invoice');
+		$this->load->model('localisation/country');
+		$this->load->model('localisation/zone');
+		$this->load->model('ticketbai/ticketbai');
+
+		$tbai_invoice_info = $this->model_sale_invoice->getInvoice($invoice_id);
+
+		if ($tbai_invoice_info) {
+			list($tbai_seller, $tbai_buyer) = $this->getFacturaeParties($tbai_invoice_info);
+		} else {
+			$tbai_seller = array('nif' => '', 'name' => '');
+			$tbai_buyer = array('nif' => '', 'name' => '');
+		}
+
+		return $this->model_ticketbai_ticketbai->send($invoice_id, $tbai_seller, $tbai_buyer, $rectified_invoice_id);
+	}
+
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="after"><![CDATA[public function autoSendAeat($invoice_id) {]]></search>
+			<add><![CDATA[		if ($this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
+			return $this->ticketbaiSend($invoice_id);
+		}
+]]></add>
+		</operation>
+		<!-- "Anular" crea una factura negativa: con TicketBAI se emite como rectificativa. -->
+		<operation error="skip">
+			<search position="after"><![CDATA[$negative_invoice_id = $this->model_sale_invoice->createNegativeInvoice($invoice_id);]]></search>
+			<add><![CDATA[				if ($negative_invoice_id && $this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
+					$this->ticketbaiSend($negative_invoice_id, (int)$invoice_id);
+				}
+]]></add>
+		</operation>
+		<!-- Icono verde del listado para las facturas aceptadas en TicketBAI. -->
+		<operation error="skip">
+			<search position="replace"><![CDATA[array('Correcto', 'ParcialmenteCorrecto')),]]></search>
+			<add><![CDATA[array('Correcto', 'ParcialmenteCorrecto', 'TicketBAI Recibido')),]]></add>
+		</operation>
+		<!-- Pestana y boton de la ficha: mismo sitio que VeriFactu, con el nombre de TicketBAI. -->
+		<operation error="skip">
+			<search position="after"><![CDATA[$this->data['button_resend_aeat'] = $this->language->get('button_resend_aeat');]]></search>
+			<add><![CDATA[			if ($this->config->get('ticketbai_active')) {
+				$this->data['tab_aeat'] = 'TicketBAI';
+				$this->data['button_resend_aeat'] = 'Reenviar a TicketBAI';
+				$this->data['text_aeat_csv'] = 'TBAI:';
+			}
+]]></add>
+		</operation>
+		<!-- QR e identificador TBAI en lugar del QR de VeriFactu al imprimir. -->
+		<operation error="skip">
+			<search position="after"><![CDATA[$qr_registered = in_array($invoice_info['aeat_status'], array('Correcto', 'ParcialmenteCorrecto'));]]></search>
+			<add><![CDATA[				$tbai_label = '';
+
+				if ($this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
+					$qr_registered = false;
+
+					$this->load->model('ticketbai/ticketbai');
+
+					$tbai_qr = $this->model_ticketbai_ticketbai->getQr($invoice_id);
+
+					if ($tbai_qr) {
+						require_once(DIR_SYSTEM . 'external/tcpdf/tcpdf_barcodes_2d.php');
+
+						$tbai_barcode = new TCPDF2DBarcode($tbai_qr['url'], 'QRCODE,M');
+						$tbai_png = $tbai_barcode->getBarcodePngData(6, 6, array(0, 0, 0));
+
+						if ($tbai_png !== false) {
+							$qr_code = 'data:image/png;base64,' . base64_encode($tbai_png);
+							$qr_code_pdf = DIR_CACHE . 'qr_invoice_' . $invoice_id . '.png';
+							file_put_contents($qr_code_pdf, $tbai_png);
+							$tbai_label = $tbai_qr['identifier'];
+						}
+					}
+				}
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="after"><![CDATA['qr_code_pdf'        => $qr_code_pdf,]]></search>
+			<add><![CDATA[					'qr_label'           => $tbai_label,]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/view/template/sale/invoice_invoice.tpl">
+		<operation error="skip">
+			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
+			<add><![CDATA[<br><b><?php echo !empty($invoices['qr_label']) ? $invoices['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/view/template/sale/invoice_printPDF.tpl">
+		<operation error="skip">
+			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
+			<add><![CDATA[<br><b><?php echo !empty($invoices['qr_label']) ? $invoices['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/view/template/sale/reports/invoice_invoice.tpl">
+		<operation error="skip">
+			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
+			<add><![CDATA[<br><b><?php echo !empty($invoice['qr_label']) ? $invoice['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+		</operation>
+	</file>
+</modification>
