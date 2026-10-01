@@ -5,11 +5,7 @@ Bizkaia (Batuz/LROE) y Gipuzkoa.
 
 Es **vqmod puro**: no usa Composer ni librerías externas. La firma XAdES-EPES, el
 encadenamiento, el identificador TBAI con su CRC-8, el QR y el envío están en
-`system/library/ticketbai.php`, que solo usa `DOMDocument`, `openssl` y `curl`, igual que
-`verifactu.php` y `facturae_signer.php` del núcleo.
-
-Con TicketBAI activo, las facturas **no** se envían a VeriFactu (AEAT). Los dos sistemas son
-excluyentes, así que el módulo toma el envío automático del núcleo.
+`system/library/ticketbai.php`, que solo usa `DOMDocument`, `openssl` y `curl`.
 
 ## Requisitos
 
@@ -17,8 +13,7 @@ excluyentes, así que el módulo toma el envío automático del núcleo.
   probado en PHP 5.6 y 8.3.
 - `curl` debe tener una lista de CA configurada (`curl.cainfo` en `php.ini`). Si no, se usa la misma
   CA opcional que VeriFactu (`config_aeat_ca_bundle`, en **Sistema > Ajustes**).
-- El certificado digital `.p12`/`.pfx` (o `.pem` con clave) y su contraseña. Son los mismos que usan
-  VeriFactu y Facturae: campos `certificado` y `clave` de **Sistema > Ajustes**.
+- El certificado digital `.p12`/`.pfx` (o `.pem` con clave) y su contraseña. 
 - El alta del software en el registro TicketBAI de la Hacienda Foral correspondiente. Ella da la
   **licencia TBAI** y el **NIF de la entidad desarrolladora** que se ponen en los Ajustes del
   módulo.
@@ -58,7 +53,7 @@ clase (`$policies`, `$endpoints`, `$qrUrls`).
 | ídem, listado | El icono verde (`aeat_ok`) acepta también `aeat_status = 'TicketBAI Recibido'` |
 | ídem, ficha | La pestaña "AEAT" pasa a llamarse "TicketBAI" y la fila CSV muestra el identificador TBAI |
 | ídem, `invoice()` | Con TicketBAI activo pinta el QR TBAI (URL de la Hacienda + CRC) con el TCPDF del núcleo, en vez del de VeriFactu |
-| `sale/invoice_invoice.tpl`, `sale/invoice_printPDF.tpl`, `sale/reports/invoice_invoice.tpl` | Bajo el QR imprime el identificador TBAI en lugar de "VERI*FACTU" |
+
 
 ## Datos
 
@@ -137,14 +132,6 @@ simulada (sin red). Se hicieron en PHP 8.3 y en PHP 5.6, para los tres territori
   - la rectificativa se encadena y, si Hacienda la rechaza, el reenvío manual se acepta;
   - el estado se refleja en `invoice.aeat_*`;
   - pantallas de listado y Ajustes, y guardado de Ajustes.
-
-**No probado**:
-
-- envíos reales a los entornos de pruebas de las Haciendas (hacen falta un certificado y una
-  licencia de verdad);
-- las pantallas en el navegador;
-- el parche de `sale/invoice.php` ejecutándose dentro de la app. Solo se comprobó aplicándolo con
-  vqmod sobre copias y con `php -l`.
 
 ## Pendiente / limitaciones conocidas
 
