@@ -3,7 +3,7 @@
  * TicketBAI (Araba, Bizkaia, Gipuzkoa): XML, firma XAdES-EPES, identificador TBAI, QR y envio.
  *
  * Autocontenida, sin Composer ni dependencias: solo DOMDocument, openssl y curl, y sintaxis
- * compatible con PHP 5 (igual que system/library/verifactu.php y facturae_signer.php del nucleo).
+ * compatible con PHP 5 (igual que facturae_signer.php del nucleo).
  *
  * Estructuras, politicas de firma y endpoints tomados de:
  *  - Especificaciones TicketBAI 1.2 y el esquema ticketbaiv1-2-2.xsd de las Haciendas Forales.

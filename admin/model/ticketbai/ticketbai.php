@@ -13,12 +13,6 @@ class ModelTicketbaiTicketbai extends Model {
 	const STATUS_REJECTED = 'rejected';
 	const STATUS_ERROR    = 'error';
 
-	// Valores que se escriben en invoice.aeat_status. Fijos (no traducibles): el icono verde del
-	// listado de facturas compara contra 'TicketBAI Recibido' (ver vqmod/xml/ticketbai.xml).
-	const CORE_STATUS_SENT     = 'TicketBAI Recibido';
-	const CORE_STATUS_REJECTED = 'TicketBAI Rechazado';
-	const CORE_STATUS_ERROR    = 'TicketBAI Error';
-
 	const APP_NAME = 'InvoiceFlash';
 
 	private static $tables_checked = false;
@@ -60,6 +54,43 @@ class ModelTicketbaiTicketbai extends Model {
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8");
 
 		self::$tables_checked = true;
+	}
+
+	// Estado de TicketBAI de una factura para el listado (codigo de estado, '' si no se firmo).
+	// Se pide dos veces por fila.
+	private $status_cache = array();
+
+	public function getStatus($invoice_id) {
+		$invoice_id = (int)$invoice_id;
+
+		if (!isset($this->status_cache[$invoice_id])) {
+			$record = $this->getRecord($invoice_id);
+
+			$this->status_cache[$invoice_id] = $record ? (string)$record['status'] : '';
+		}
+
+		return $this->status_cache[$invoice_id];
+	}
+
+	public function isAccepted($status) {
+		return $status === self::STATUS_SENT;
+	}
+
+	// Datos para la pestana TicketBAI de la ficha de factura (todo vacio si no se firmo).
+	// 'status' y 'notice' salen ya listos para imprimir (el estado lleva entidades HTML).
+	public function getInfo($invoice_id) {
+		$record = $this->getRecord($invoice_id);
+
+		$info = array('sent_date' => '', 'status' => '', 'notice' => '', 'identifier' => '');
+
+		if ($record) {
+			$info['sent_date'] = $record['date_sent'] ? date($this->language->get('date_format_short') . ' H:i', strtotime($record['date_sent'])) : '';
+			$info['status'] = $this->text('text_status_' . $record['status']);
+			$info['notice'] = nl2br(htmlspecialchars($record['message']));
+			$info['identifier'] = $record['identifier'];
+		}
+
+		return $info;
 	}
 
 	public function isActive() {
@@ -149,10 +180,10 @@ class ModelTicketbaiTicketbai extends Model {
 
 	/**
 	 * Firma y envia una factura de venta. $seller/$buyer vienen de
-	 * ControllerSaleInvoice::getFacturaeParties() (mismos datos que VeriFactu y Facturae).
+	 * ControllerSaleInvoice::getFacturaeParties() (mismos datos que Facturae).
 	 * $rectified_invoice_id > 0 la emite como rectificativa por diferencias de esa factura.
 	 *
-	 * Devuelve array('success' => bool, 'message' => string), el mismo contrato que autoSendAeat().
+	 * Devuelve array('success' => bool, 'message' => string), con el que responden los envios.
 	 */
 	public function send($invoice_id, $seller, $buyer, $rectified_invoice_id = 0) {
 		$this->install();
@@ -164,8 +195,6 @@ class ModelTicketbaiTicketbai extends Model {
 		}
 
 		if ($error) {
-			$this->writeCoreStatus($invoice_id, self::CORE_STATUS_ERROR, $error, '', false);
-
 			return array('success' => false, 'message' => $error);
 		}
 
@@ -179,8 +208,6 @@ class ModelTicketbaiTicketbai extends Model {
 			$signed = $this->signInvoice($invoice_id, $seller, $buyer, $rectified_invoice_id);
 
 			if (!$signed['success']) {
-				$this->writeCoreStatus($invoice_id, self::CORE_STATUS_ERROR, $signed['message'], '', false);
-
 				return $signed;
 			}
 
@@ -188,6 +215,51 @@ class ModelTicketbaiTicketbai extends Model {
 		}
 
 		return $this->submit($record);
+	}
+
+	/**
+	 * Envio automatico tras crear una factura (hooks de ticketbai.xml en sale/invoice, sale/draft
+	 * y sale/delivery). No hace nada si TicketBAI no esta activo.
+	 */
+	public function autoSend($invoice_id) {
+		if (!$this->config->get('ticketbai_active')) {
+			return false;
+		}
+
+		return $this->sendInvoice($invoice_id);
+	}
+
+	/**
+	 * Firma y envia una factura (alta automatica, "Anular" y boton de la ficha).
+	 * $rectified_invoice_id > 0 la emite como rectificativa de esa factura.
+	 *
+	 * Devuelve array('success' => bool, 'message' => string).
+	 */
+	public function sendInvoice($invoice_id, $rectified_invoice_id = 0) {
+		$this->load->model('sale/invoice');
+		$this->load->model('localisation/country');
+		$this->load->model('localisation/zone');
+
+		$invoice_info = $this->model_sale_invoice->getInvoice($invoice_id);
+
+		if ($invoice_info) {
+			// getFacturaeParties() es protegido y lo comparte Facturae: se invoca por reflexion.
+			if (!class_exists('ControllerSaleInvoice', false)) {
+				require_once(VQMod::modCheck(DIR_APPLICATION . 'controller/sale/invoice.php'));
+			}
+
+			$controller = new ControllerSaleInvoice($this->registry);
+
+			$reflection = new ReflectionMethod($controller, 'getFacturaeParties');
+			$reflection->setAccessible(true);
+
+			list($seller, $buyer) = $reflection->invoke($controller, $invoice_info);
+		} else {
+			$seller = array('nif' => '', 'name' => '');
+			$buyer = array('nif' => '', 'name' => '');
+		}
+
+		return $this->send($invoice_id, $seller, $buyer, $rectified_invoice_id);
 	}
 
 	// Reenvio manual de una factura ya firmada (pantalla TicketBAI).
@@ -227,6 +299,39 @@ class ModelTicketbaiTicketbai extends Model {
 			'identifier' => $record['identifier'],
 			'url'        => $record['qr_url']
 		);
+	}
+
+	/**
+	 * QR e identificador TBAI para la factura impresa (qr_code para HTML, qr_code_pdf para TCPDF,
+	 * que no pinta data-uri). Sin factura firmada devuelve todo vacio y las plantillas no pintan QR.
+	 */
+	public function getPrintQr($invoice_id) {
+		$result = array(
+			'qr_code'       => '',
+			'qr_code_pdf'   => '',
+			'qr_label'      => ''
+		);
+
+		$qr = $this->getQr($invoice_id);
+
+		if ($qr) {
+			require_once(DIR_SYSTEM . 'external/tcpdf/tcpdf_barcodes_2d.php');
+
+			$barcode = new TCPDF2DBarcode($qr['url'], 'QRCODE,M');
+			$png = $barcode->getBarcodePngData(6, 6, array(0, 0, 0));
+
+			if ($png !== false) {
+				$result['qr_code'] = 'data:image/png;base64,' . base64_encode($png);
+
+				// TCPDF writeHTML() no pinta imagenes data-uri: el PDF necesita un fichero real.
+				$result['qr_code_pdf'] = DIR_CACHE . 'qr_invoice_' . (int)$invoice_id . '.png';
+				file_put_contents($result['qr_code_pdf'], $png);
+
+				$result['qr_label'] = $qr['identifier'];
+			}
+		}
+
+		return $result;
 	}
 
 	private function signInvoice($invoice_id, $seller, $buyer, $rectified_invoice_id) {
@@ -395,29 +500,12 @@ class ModelTicketbaiTicketbai extends Model {
 
 		$ok = ($status == self::STATUS_SENT);
 
-		$this->writeCoreStatus($record['invoice_id'], $ok ? self::CORE_STATUS_SENT : ($status == self::STATUS_REJECTED ? self::CORE_STATUS_REJECTED : self::CORE_STATUS_ERROR), $message, $record['identifier'], true, $sent_date);
-
 		return array(
 			'success' => $ok,
 			'message' => $ok ? $this->text('text_success_sent') : $message
 		);
 	}
 
-	// Refleja el resultado en las columnas aeat_* de la factura, que son las que pintan el
-	// icono del listado y la pestana AEAT de la ficha. Nunca toca aeat_hash (cadena VeriFactu).
-	private function writeCoreStatus($invoice_id, $status, $notice, $identifier, $sent, $sent_date = null) {
-		$sql = "UPDATE `" . DB_PREFIX . "invoice` SET aeat_status = '" . $this->db->escape($status) . "', aeat_notice = '" . $this->db->escape($notice) . "'";
-
-		if ($identifier !== '') {
-			$sql .= ", aeat_csv = '" . $this->db->escape(utf8_substr($identifier, 0, 100)) . "'";
-		}
-
-		if ($sent) {
-			$sql .= ", aeat_sent_date = '" . $this->db->escape($sent_date) . "', aeat_response_date = NOW()";
-		}
-
-		$this->db->query($sql . " WHERE invoice_id = '" . (int)$invoice_id . "'");
-	}
 
 	/**
 	 * Datos de la factura en el formato de Ticketbai::buildInvoiceXml(). Devuelve un string con
@@ -553,8 +641,8 @@ class ModelTicketbaiTicketbai extends Model {
 		return $data;
 	}
 
-	// Desglose de IVA a partir de las filas `tax` de invoice_total (misma derivacion que VeriFactu:
-	// base = cuota / tipo, asi funciona con varios tipos en la misma factura).
+	// Desglose de IVA a partir de las filas `tax` de invoice_total (base = cuota / tipo,
+	// asi funciona con varios tipos en la misma factura).
 	private function buildBreakdown($invoice_id) {
 		$this->load->model('localisation/tax_rate');
 
@@ -650,6 +738,11 @@ class ModelTicketbaiTicketbai extends Model {
 
 	// Textos del modulo leidos aparte: $this->language->load() los mezclaria con los de la
 	// pantalla que llama (sale/invoice, sale/delivery...) y pisaria claves como heading_title.
+	// Texto del idioma del admin sin cargar el fichero en $this->language (ver text()).
+	public function label($key) {
+		return $this->text($key);
+	}
+
 	private function text($key) {
 		if ($this->texts === null) {
 			$this->texts = array();
@@ -683,8 +776,8 @@ class ModelTicketbaiTicketbai extends Model {
 
 		$client = new Ticketbai($territory, $production);
 
-		// Misma CA opcional que VeriFactu (Sistema > Ajustes), para servidores sin CA en curl.
-		$ca_bundle = trim((string)$this->config->get('config_aeat_ca_bundle'));
+		// CA opcional (Ventas > TicketBAI > Ajustes), para servidores sin CA configurada en curl.
+		$ca_bundle = trim((string)$this->config->get('ticketbai_ca_bundle'));
 
 		if ($ca_bundle !== '') {
 			$root = dirname(rtrim(str_replace('\\', '/', DIR_APPLICATION), '/'));

@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <modification>
 	<id>ticketbai_modulo</id>
-	<version>1.0.0</version>
+	<version>2.0.0</version>
 	<vqmver>2.5.1</vqmver>
 	<author>InvoiceFlash</author>
+
+	<!-- Modulo TicketBai, independiente: solo se ancla al nucleo de InvoiceFlash 0.0.17 o posterior. -->
 
 	<!-- Ventas > TicketBAI + autoinstalacion de la tabla tbai_invoice y de los permisos
 	     del grupo 1. -->
@@ -71,114 +73,178 @@ $_['text_ticketbai'] = 'TicketBAI';
 	</file>
 
 	<file name="admin/controller/sale/invoice.php">
-		<!-- Con TicketBAI activo, el envio automatico (alta de factura, draft y albaran
-		     convertidos, boton de reenvio de la pestana AEAT) va a la Hacienda Foral. -->
+		<!-- Envio automatico al crear la factura (no hace nada si TicketBAI no esta activo). -->
 		<operation error="skip">
-			<search position="before"><![CDATA[public function autoSendAeat($invoice_id) {]]></search>
-			<add><![CDATA[	// TicketBAI (modulo TicketBai): firma y envio a la Hacienda Foral. $rectified_invoice_id > 0
-	// la emite como rectificativa de esa factura.
-	public function ticketbaiSend($invoice_id, $rectified_invoice_id = 0) {
-		$this->load->model('sale/invoice');
-		$this->load->model('localisation/country');
-		$this->load->model('localisation/zone');
-		$this->load->model('ticketbai/ticketbai');
-
-		$tbai_invoice_info = $this->model_sale_invoice->getInvoice($invoice_id);
-
-		if ($tbai_invoice_info) {
-			list($tbai_seller, $tbai_buyer) = $this->getFacturaeParties($tbai_invoice_info);
-		} else {
-			$tbai_seller = array('nif' => '', 'name' => '');
-			$tbai_buyer = array('nif' => '', 'name' => '');
-		}
-
-		return $this->model_ticketbai_ticketbai->send($invoice_id, $tbai_seller, $tbai_buyer, $rectified_invoice_id);
-	}
-
+			<search position="after"><![CDATA[$new_invoice_id = $this->model_sale_invoice->addInvoice($this->request->post);]]></search>
+			<add><![CDATA[
+				$this->load->model('ticketbai/ticketbai');
+				$this->model_ticketbai_ticketbai->autoSend($new_invoice_id);
 ]]></add>
 		</operation>
-		<operation error="skip">
-			<search position="after"><![CDATA[public function autoSendAeat($invoice_id) {]]></search>
-			<add><![CDATA[		if ($this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
-			return $this->ticketbaiSend($invoice_id);
-		}
-]]></add>
-		</operation>
-		<!-- "Anular" crea una factura negativa: con TicketBAI se emite como rectificativa. -->
+
+		<!-- "Anular" crea una factura negativa: con TicketBAI se emite como rectificativa de la original. -->
 		<operation error="skip">
 			<search position="after"><![CDATA[$negative_invoice_id = $this->model_sale_invoice->createNegativeInvoice($invoice_id);]]></search>
-			<add><![CDATA[				if ($negative_invoice_id && $this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
-					$this->ticketbaiSend($negative_invoice_id, (int)$invoice_id);
-				}
-]]></add>
-		</operation>
-		<!-- Icono verde del listado para las facturas aceptadas en TicketBAI. -->
-		<operation error="skip">
-			<search position="replace"><![CDATA[array('Correcto', 'ParcialmenteCorrecto')),]]></search>
-			<add><![CDATA[array('Correcto', 'ParcialmenteCorrecto', 'TicketBAI Recibido')),]]></add>
-		</operation>
-		<!-- Pestana y boton de la ficha: mismo sitio que VeriFactu, con el nombre de TicketBAI. -->
-		<operation error="skip">
-			<search position="after"><![CDATA[$this->data['button_resend_aeat'] = $this->language->get('button_resend_aeat');]]></search>
-			<add><![CDATA[			if ($this->config->get('ticketbai_active')) {
-				$this->data['tab_aeat'] = 'TicketBAI';
-				$this->data['button_resend_aeat'] = 'Reenviar a TicketBAI';
-				$this->data['text_aeat_csv'] = 'TBAI:';
-			}
-]]></add>
-		</operation>
-		<!-- QR e identificador TBAI en lugar del QR de VeriFactu al imprimir. -->
-		<operation error="skip">
-			<search position="after"><![CDATA[$qr_registered = in_array($invoice_info['aeat_status'], array('Correcto', 'ParcialmenteCorrecto'));]]></search>
-			<add><![CDATA[				$tbai_label = '';
-
-				if ($this->config->get('ticketbai_active') && is_file(DIR_APPLICATION . 'model/ticketbai/ticketbai.php')) {
-					$qr_registered = false;
-
+			<add><![CDATA[				if ($negative_invoice_id && $this->config->get('ticketbai_active')) {
 					$this->load->model('ticketbai/ticketbai');
-
-					$tbai_qr = $this->model_ticketbai_ticketbai->getQr($invoice_id);
-
-					if ($tbai_qr) {
-						require_once(DIR_SYSTEM . 'external/tcpdf/tcpdf_barcodes_2d.php');
-
-						$tbai_barcode = new TCPDF2DBarcode($tbai_qr['url'], 'QRCODE,M');
-						$tbai_png = $tbai_barcode->getBarcodePngData(6, 6, array(0, 0, 0));
-
-						if ($tbai_png !== false) {
-							$qr_code = 'data:image/png;base64,' . base64_encode($tbai_png);
-							$qr_code_pdf = DIR_CACHE . 'qr_invoice_' . $invoice_id . '.png';
-							file_put_contents($qr_code_pdf, $tbai_png);
-							$tbai_label = $tbai_qr['identifier'];
-						}
-					}
+					$this->model_ticketbai_ticketbai->sendInvoice($negative_invoice_id, (int)$invoice_id);
 				}
 ]]></add>
 		</operation>
+
+		<!-- Listado: estado TicketBAI de cada factura (icono QR) -->
 		<operation error="skip">
-			<search position="after"><![CDATA['qr_code_pdf'        => $qr_code_pdf,]]></search>
-			<add><![CDATA[					'qr_label'           => $tbai_label,]]></add>
+			<search position="after"><![CDATA[$results = $this->model_sale_invoice->getInvoices($data);]]></search>
+			<add><![CDATA[
+		$this->load->model('ticketbai/ticketbai');
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="after"><![CDATA['selected'      => isset($this->request->post['selected']) && in_array($result['invoice_id'], $this->request->post['selected']),]]></search>
+			<add><![CDATA[
+					'tbai_status'   => $this->model_ticketbai_ticketbai->getStatus($result['invoice_id']),
+					'tbai_ok'       => $this->model_ticketbai_ticketbai->isAccepted($this->model_ticketbai_ticketbai->getStatus($result['invoice_id'])),
+]]></add>
+		</operation>
+
+		<!-- Ficha: pestana TicketBAI -->
+		<operation error="skip">
+			<search position="after"><![CDATA[$this->data['tab_receipts'] = $this->language->get('tab_receipts');]]></search>
+			<add><![CDATA[
+				// TicketBAI (modulo TicketBai): pestana de la ficha
+				$this->load->model('ticketbai/ticketbai');
+
+				$this->data['tab_ticketbai'] = $this->model_ticketbai_ticketbai->label('tab_ticketbai');
+				$this->data['text_info_sent_date'] = $this->model_ticketbai_ticketbai->label('text_info_sent_date');
+				$this->data['text_info_status'] = $this->model_ticketbai_ticketbai->label('text_info_status');
+				$this->data['text_info_notice'] = $this->model_ticketbai_ticketbai->label('text_info_notice');
+				$this->data['text_info_identifier'] = $this->model_ticketbai_ticketbai->label('text_info_identifier');
+				$this->data['button_resend_invoice'] = $this->model_ticketbai_ticketbai->label('button_resend_invoice');
+
+				$tbai_info = $this->model_ticketbai_ticketbai->getInfo($invoice_id);
+
+				$this->data['tbai_sent_date'] = $tbai_info['sent_date'];
+				$this->data['tbai_status'] = $tbai_info['status'];
+				$this->data['tbai_notice'] = $tbai_info['notice'];
+				$this->data['tbai_identifier'] = $tbai_info['identifier'];
+]]></add>
+		</operation>
+
+		<!-- Factura impresa: QR TBAI (se calcula antes de montar el array de la factura) -->
+		<operation error="skip">
+			<search position="before" offset="2"><![CDATA['invoice_no'         => $invoice_no,]]></search>
+			<add><![CDATA[
+					// TicketBAI (modulo TicketBai): QR e identificador TBAI
+					$this->load->model('ticketbai/ticketbai');
+					$tbai_qr = $this->model_ticketbai_ticketbai->getPrintQr($invoice_id);
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="before"><![CDATA['comment'            => nl2br($invoice_info['comment'])]]></search>
+			<add><![CDATA[
+						'qr_code'            => $tbai_qr['qr_code'],
+						'qr_code_pdf'        => $tbai_qr['qr_code_pdf'],
+						'qr_label'           => $tbai_qr['qr_label'],
+]]></add>
 		</operation>
 	</file>
 
+	<!-- Envio al convertir un albaran o un borrador en factura -->
+	<file name="admin/controller/sale/delivery.php">
+		<operation error="skip">
+			<search position="after"><![CDATA[$this->db->query("UPDATE " . DB_PREFIX . "delivery SET invoice_no = " . (int)$invoice_no . " WHERE delivery_id = " . (int)$delivery_id);]]></search>
+			<add><![CDATA[
+				$this->load->model('ticketbai/ticketbai');
+				$this->model_ticketbai_ticketbai->autoSend((int)$invoice_no);
+]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/controller/sale/draft.php">
+		<operation error="skip">
+			<search position="after"><![CDATA[$new_invoice_id = $this->model_sale_invoice->addInvoice($data);]]></search>
+			<add><![CDATA[
+						$this->load->model('ticketbai/ticketbai');
+						$this->model_ticketbai_ticketbai->autoSend((int)$new_invoice_id);
+]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/view/template/sale/invoice_list.tpl">
+		<operation error="skip">
+			<search position="after"><![CDATA[<th width="40" class="text-center"><input type="checkbox" data-toggle="selected"></th>]]></search>
+			<add><![CDATA[
+						<th width="40" class="text-center d-none d-lg-table-cell"><svg class="bi" aria-hidden="true"><use href="view/image/bootstrap-icons.svg#qr-code"/></svg></th>
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="before"><![CDATA[<td class="text-end"><?php echo $invoice['invoice_id']; ?></td>]]></search>
+			<add><![CDATA[
+						<td class="text-center d-none d-lg-table-cell"><?php if ($invoice['tbai_ok']) { ?>
+							<svg class="bi text-success" data-bs-toggle="tooltip" title="TicketBAI"><use href="view/image/bootstrap-icons.svg#qr-code"/></svg>
+							<?php } else { ?>
+							<svg class="bi" style="color:#000;"><use href="view/image/bootstrap-icons.svg#qr-code"/></svg>
+							<?php } ?></td>
+]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="replace"><![CDATA[colspan="7"]]></search>
+			<add><![CDATA[colspan="8"]]></add>
+		</operation>
+	</file>
+
+	<file name="admin/view/template/sale/invoice_info.tpl">
+		<operation error="skip">
+			<search position="after"><![CDATA[href="#tab-receipts"]]></search>
+			<add><![CDATA[				<li class="nav-item"><a class="nav-link" href="#tab-ticketbai" data-bs-toggle="tab"><?php echo $tab_ticketbai; ?></a></li>]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="after" offset="1"><![CDATA[<div id="receipts" data-href=]]></search>
+			<add><![CDATA[<?php include(DIR_TEMPLATE . 'ticketbai/info_pane.tpl'); ?>]]></add>
+		</operation>
+		<operation error="skip">
+			<search position="after" offset="1"><![CDATA[include(DIR_TEMPLATE . 'sale/print_modal.tpl');]]></search>
+			<add><![CDATA[<?php include(DIR_TEMPLATE . 'ticketbai/info_script.tpl'); ?>]]></add>
+		</operation>
+	</file>
+
+	<!-- QR TBAI y su identificador en las tres salidas impresas -->
 	<file name="admin/view/template/sale/invoice_invoice.tpl">
 		<operation error="skip">
-			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
-			<add><![CDATA[<br><b><?php echo !empty($invoices['qr_label']) ? $invoices['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+			<search position="after" offset="1"><![CDATA[<img src="<?php echo '../image/' . $logo; ?>" title="<?php echo $invoices['store_name']; ?>" />]]></search>
+			<add><![CDATA[		<?php if ($invoices['qr_code']) { ?>
+		<div style="text-align:center;">
+			<div><b>QR TicketBAI:</b></div>
+			<img src="<?php echo $invoices['qr_code']; ?>" style="width:30mm; height:30mm;" alt="QR TicketBAI" /><br><b><?php echo $invoices['qr_label']; ?></b>
+		</div>
+		<?php } ?>]]></add>
 		</operation>
 	</file>
 
 	<file name="admin/view/template/sale/invoice_printPDF.tpl">
 		<operation error="skip">
-			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
-			<add><![CDATA[<br><b><?php echo !empty($invoices['qr_label']) ? $invoices['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+			<search position="after"><![CDATA[<td style="vertical-align:top; text-align:center; padding:0;">]]></search>
+			<add><![CDATA[				<?php if ($invoices['qr_code_pdf']) { ?>
+				<div><b>QR TicketBAI:</b></div>
+				<img src="<?php echo $invoices['qr_code_pdf']; ?>" style="width:30mm; height:30mm;" alt="QR TicketBAI" /><br><b><?php echo $invoices['qr_label']; ?></b>
+				<?php } ?>]]></add>
 		</operation>
 	</file>
 
 	<file name="admin/view/template/sale/reports/invoice_invoice.tpl">
 		<operation error="skip">
-			<search position="replace"><![CDATA[<br><b>VERI*FACTU</b>]]></search>
-			<add><![CDATA[<br><b><?php echo !empty($invoice['qr_label']) ? $invoice['qr_label'] : 'VERI*FACTU'; ?></b>]]></add>
+			<search position="after" offset="3"><![CDATA[<b><?php echo $text_shipping_method; ?></b>&nbsp;&nbsp;<?php echo $invoice['shipping_method']; ?><br>]]></search>
+			<add><![CDATA[				<?php if ($invoice['qr_code_pdf']) { ?>
+				<table style="width:100%; border-collapse:collapse;">
+					<tr>
+						<td></td>
+						<td style="width:30mm; text-align:center; padding:0;">
+							<div><b>QR TicketBAI:</b></div>
+							<img src="<?php echo $invoice['qr_code_pdf']; ?>" style="width:30mm; height:30mm;" alt="QR TicketBAI" /><br><b><?php echo $invoice['qr_label']; ?></b>
+						</td>
+					</tr>
+				</table>
+				<?php } ?>]]></add>
 		</operation>
 	</file>
 </modification>

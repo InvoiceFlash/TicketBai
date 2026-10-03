@@ -6,18 +6,18 @@
 <div class="alert alert-warning"><?php echo $tbai_warning; ?></div>
 <?php } ?>
 
-<div class="panel panel-default">
+<div class="card page-card">
 
-	<div class="panel-heading clearfix">
-		<div class="pull-left h2"><i class="fa fa-qrcode"></i> <?php echo $heading_title; ?></div>
-		<div class="pull-right">
+	<div class="card-header clearfix">
+		<div class="float-start h2"><i class="fa fa-qrcode"></i> <?php echo $heading_title; ?></div>
+		<div class="float-end">
 			<a href="<?php echo $setting; ?>" class="btn btn-primary"><i class="fa fa-cog"></i> <?php echo $button_setting; ?></a>
 		</div>
 	</div>
 
-	<div class="panel-body">
+	<div class="card-body">
 		<?php if ($active) { ?>
-		<p class="text-muted"><?php echo $text_verifactu_note; ?></p>
+		<p class="text-muted"><?php echo $text_active_note; ?></p>
 		<?php } ?>
 		<div id="tbai-alert"></div>
 		<div class="table-responsive">
@@ -28,23 +28,23 @@
 						<td><?php echo $column_type; ?></td>
 						<td><?php echo $column_customer; ?></td>
 						<td><?php echo $column_date; ?></td>
-						<td class="text-right"><?php echo $column_total; ?></td>
+						<td class="text-end"><?php echo $column_total; ?></td>
 						<td><?php echo $column_identifier; ?></td>
 						<td><?php echo $column_environment; ?></td>
 						<td><?php echo $column_status; ?></td>
-						<td class="text-right"><?php echo $column_action; ?></td>
+						<td class="text-end"><?php echo $column_action; ?></td>
 					</tr>
 					<tr id="filter">
 						<td colspan="7"></td>
 						<td>
-							<select name="filter_status" class="form-control">
+							<select name="filter_status" class="form-select">
 								<option value=""><?php echo $text_all; ?></option>
 								<?php foreach ($statuses as $status_code => $status_name) { ?>
 								<option value="<?php echo $status_code; ?>"<?php echo ($status_code == $filter_status) ? ' selected="selected"' : ''; ?>><?php echo $status_name; ?></option>
 								<?php } ?>
 							</select>
 						</td>
-						<td class="text-right"><button type="button" id="button-tbai-filter" class="btn btn-default"><i class="fa fa-filter"></i> <?php echo $button_filter; ?></button></td>
+						<td class="text-end"><button type="button" id="button-tbai-filter" class="btn btn-default"><i class="fa fa-filter"></i> <?php echo $button_filter; ?></button></td>
 					</tr>
 				</thead>
 				<tbody>
@@ -55,7 +55,7 @@
 						<td><?php echo $record['type']; ?></td>
 						<td><?php echo $record['customer']; ?></td>
 						<td><?php echo $record['date']; ?></td>
-						<td class="text-right"><?php echo $record['total']; ?></td>
+						<td class="text-end"><?php echo $record['total']; ?></td>
 						<td><small><?php echo $record['identifier']; ?></small></td>
 						<td><?php echo $record['environment']; ?></td>
 						<td>
@@ -64,7 +64,7 @@
 							<div><small><?php echo $record['message']; ?></small></div>
 							<?php } ?>
 						</td>
-						<td class="text-right" style="white-space:nowrap;">
+						<td class="text-end" style="white-space:nowrap;">
 							<?php if ($can_modify && $record['can_resend']) { ?>
 							<button type="button" class="btn btn-primary tbai-resend" data-invoice-id="<?php echo $record['invoice_id']; ?>"><i class="fa fa-paper-plane"></i> <?php echo $button_resend; ?></button>
 							<?php } ?>

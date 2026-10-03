@@ -5,15 +5,22 @@ Bizkaia (Batuz/LROE) y Gipuzkoa.
 
 Es **vqmod puro**: no usa Composer ni librerías externas. La firma XAdES-EPES, el
 encadenamiento, el identificador TBAI con su CRC-8, el QR y el envío están en
-`system/library/ticketbai.php`, que solo usa `DOMDocument`, `openssl` y `curl`.
+`system/library/ticketbai.php`, que solo usa `DOMDocument`, `openssl` y `curl`, igual que
+`facturae_signer.php` del núcleo.
+
+Módulo independiente: solo se ancla al núcleo de InvoiceFlash (0.0.17 o posterior) y no depende de
+ningún otro módulo. Con TicketBAI activo, las facturas nuevas se firman y se envían a la Hacienda
+Foral.
 
 ## Requisitos
 
+- InvoiceFlash 0.0.17 o posterior.
 - PHP con `openssl`, `curl`, `dom`, `simplexml` y `zlib`. El código es compatible con PHP 5 y está
   probado en PHP 5.6 y 8.3.
-- `curl` debe tener una lista de CA configurada (`curl.cainfo` en `php.ini`). Si no, se usa la misma
-  CA opcional que VeriFactu (`config_aeat_ca_bundle`, en **Sistema > Ajustes**).
-- El certificado digital `.p12`/`.pfx` (o `.pem` con clave) y su contraseña. 
+- `curl` debe tener una lista de CA configurada (`curl.cainfo` en `php.ini`). Si no, se indica la
+  ruta a un almacén CA en **Ventas > TicketBAI > Ajustes**.
+- El certificado digital `.p12`/`.pfx` (o `.pem` con clave) y su contraseña. Son los mismos que usa
+  Facturae: campos `certificado` y `clave` de **Sistema > Ajustes**.
 - El alta del software en el registro TicketBAI de la Hacienda Foral correspondiente. Ella da la
   **licencia TBAI** y el **NIF de la entidad desarrolladora** que se ponen en los Ajustes del
   módulo.
@@ -25,7 +32,8 @@ TicketBai/
 ├── admin/controller/ticketbai/ticketbai.php        Ventas > TicketBAI: listado, Ajustes, reenviar, descargar XML
 ├── admin/model/ticketbai/ticketbai.php             datos de la factura, encadenamiento, estados
 ├── admin/language/{es_ES,en-gb}/ticketbai/ticketbai.php
-├── admin/view/template/ticketbai/{ticketbai_list,ticketbai_setting}.tpl
+├── admin/view/template/ticketbai/{ticketbai_list,ticketbai_setting,info_pane,info_script}.tpl
+│                                                   listado, Ajustes y pestaña TicketBAI de la ficha de factura
 ├── system/library/ticketbai.php                    XML, firma, identificador, QR, envío (clase Ticketbai)
 └── vqmod/xml/ticketbai.xml                         id ticketbai_modulo
 ```
@@ -48,12 +56,12 @@ clase (`$policies`, `$endpoints`, `$qrUrls`).
 |---|---|
 | `admin/controller/common/header.php` | Antes de `if ($sales) {`: crea la tabla `tbai_invoice` (idempotente), da permisos `ticketbai/ticketbai` al grupo 1 y añade **Ventas > TicketBAI** |
 | `admin/language/{es_ES,en-gb}/common/header.php` | `text_ticketbai` |
-| `admin/controller/sale/invoice.php` | Método nuevo `ticketbaiSend()`. Al principio de `autoSendAeat()`, si `ticketbai_active` está activo, envía a TicketBAI y sale. Eso cubre el alta de factura, los drafts y albaranes convertidos (`sale/draft`, `sale/delivery`) y el botón de reenvío de la pestaña AEAT |
-| ídem, `delete()` ("Anular") | La factura negativa que crea `createNegativeInvoice()` se emite como **rectificativa por diferencias (R1, tipo I)** de la original |
-| ídem, listado | El icono verde (`aeat_ok`) acepta también `aeat_status = 'TicketBAI Recibido'` |
-| ídem, ficha | La pestaña "AEAT" pasa a llamarse "TicketBAI" y la fila CSV muestra el identificador TBAI |
-| ídem, `invoice()` | Con TicketBAI activo pinta el QR TBAI (URL de la Hacienda + CRC) con el TCPDF del núcleo, en vez del de VeriFactu |
-
+| `admin/controller/sale/invoice.php`, alta | Tras `addInvoice()`, `autoSend()` firma y envía la factura si `ticketbai_active` está activo |
+| `sale/draft.php`, `sale/delivery.php` | Lo mismo al convertir un borrador o un albarán en factura |
+| `sale/invoice.php`, `delete()` ("Anular") | La factura negativa que crea `createNegativeInvoice()` se emite como **rectificativa por diferencias (R1, tipo I)** de la original |
+| ídem, listado y `sale/invoice_list.tpl` | Columna con el icono QR: verde si la factura está aceptada en TicketBAI |
+| ídem, ficha y `sale/invoice_info.tpl` | Pestaña **TicketBAI** (fecha de envío, estado, mensaje, identificador TBAI) con el botón **Reenviar a TicketBAI** (`ticketbai/ticketbai/invoiceResend`: si la factura aún no se firmó, la firma y la envía) |
+| ídem, factura impresa y `sale/invoice_invoice.tpl`, `sale/invoice_printPDF.tpl`, `sale/reports/invoice_invoice.tpl` | QR TBAI (URL de la Hacienda + CRC, con el TCPDF del núcleo) con el identificador debajo. Pasa `qr_code`, `qr_code_pdf` y `qr_label` |
 
 ## Datos
 
@@ -65,13 +73,13 @@ Tabla `tbai_invoice`, con una fila por factura y `UNIQUE(invoice_id)`. Guarda:
 - el estado (`signed`, `sent`, `rejected` o `error`), el mensaje de Hacienda, la respuesta en bruto
   y el número de intentos.
 
-Además refleja el resultado en `invoice.aeat_status`, `aeat_notice`, `aeat_csv` y las fechas, con
-los valores fijos `TicketBAI Recibido`, `TicketBAI Rechazado` y `TicketBAI Error`. Nunca toca
-`aeat_hash`, que es la cadena de VeriFactu.
+No toca ninguna tabla ni columna del núcleo: el listado y la pestaña de la ficha leen el estado de
+`tbai_invoice`. Los errores que ocurren antes de firmar (configuración incompleta, datos de la
+factura) no se guardan: salen como mensaje al pulsar **Reenviar a TicketBAI**.
 
 Los ajustes van al grupo `ticketbai` de `setting`: `ticketbai_active`, `_territory` (01/02/03),
 `_environment` (test/production), `_license`, `_developer_nif`, `_self_employed`, `_epigraph`,
-`_exempt_reason` y `_foreign_operation`.
+`_exempt_reason`, `_foreign_operation` y `_ca_bundle`.
 
 ## Reglas que sigue
 
@@ -81,14 +89,13 @@ Los ajustes van al grupo `ticketbai` de `setting`: `ticketbai_active`, `_territo
 - **Encadenamiento** por tienda, NIF emisor y entorno (pruebas y producción llevan cadenas
   separadas). La firma se serializa con `GET_LOCK` para que dos altas simultáneas no se encadenen a
   la misma factura anterior.
-- **Serie y número**: serie = `invoice_prefix`, número = `invoice_no` (o `invoice_id` si no hay),
-  igual que VeriFactu. TicketBAI admite como máximo 20 caracteres en cada uno.
+- **Serie y número**: serie = `invoice_prefix`, número = `invoice_no` (o `invoice_id` si no hay).
+  TicketBAI admite como máximo 20 caracteres en cada uno.
 - **Cliente sin NIF**: se emite como factura simplificada, solo hasta 400 €.
 - **Cliente extranjero**: se identifica con `IDOtro` (tipo 02 NIF-IVA para la UE, con el prefijo VIES;
   04 para el resto). Además lleva el desglose por tipo de operación, entrega de bienes o prestación
   de servicios según Ajustes, porque TicketBAI lo exige.
-- **IVA**: el desglose sale de las filas `tax` de `invoice_total` (base = cuota ÷ tipo), igual que
-  VeriFactu, como operación sujeta y no exenta S1. Una factura sin IVA va como sujeta y exenta con
+- **IVA**: el desglose sale de las filas `tax` de `invoice_total` (base = cuota ÷ tipo), como operación sujeta y no exenta S1. Una factura sin IVA va como sujeta y exenta con
   la causa E1–E6 elegida en Ajustes.
 - **Líneas**: importe con IVA = `total` + `tax` × |cantidad| (`tax` es el IVA por unidad, según el
   convenio de OpenCart). El descuento en % se convierte a importe.
@@ -130,7 +137,7 @@ simulada (sin red). Se hicieron en PHP 8.3 y en PHP 5.6, para los tres territori
   - reintento aceptado con el mismo XML;
   - una factura aceptada no se reenvía;
   - la rectificativa se encadena y, si Hacienda la rechaza, el reenvío manual se acepta;
-  - el estado se refleja en `invoice.aeat_*`;
+  - el estado de la factura en `tbai_invoice`;
   - pantallas de listado y Ajustes, y guardado de Ajustes.
 
 ## Pendiente / limitaciones conocidas
@@ -143,4 +150,5 @@ simulada (sin red). Se hicieron en PHP 8.3 y en PHP 5.6, para los tres territori
   numerarlas en el núcleo antes de producción.
 - La plantilla configurable del diseñador de informes (`{qr_code}` de `tools/report_designer`) pinta
   el QR TBAI, pero no el texto del identificador.
-- Los documentos que no pasan por `autoSendAeat()` no se envían.
+- Solo se envían las facturas que pasan por los hooks de arriba (alta, borrador, albarán, Anular y el
+  botón de la ficha).

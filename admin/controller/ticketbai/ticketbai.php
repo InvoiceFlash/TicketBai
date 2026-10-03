@@ -11,7 +11,8 @@ class ControllerTicketbaiTicketbai extends Controller {
 		'ticketbai_self_employed',
 		'ticketbai_epigraph',
 		'ticketbai_exempt_reason',
-		'ticketbai_foreign_operation'
+		'ticketbai_foreign_operation',
+		'ticketbai_ca_bundle'
 	);
 
 	// Listado de facturas firmadas y su estado en la Hacienda Foral.
@@ -28,7 +29,7 @@ class ControllerTicketbaiTicketbai extends Controller {
 
 		$this->data['heading_title'] = $this->language->get('heading_title');
 
-		foreach (array('text_no_results', 'text_all', 'text_confirm_resend', 'text_verifactu_note', 'column_invoice', 'column_type', 'column_customer', 'column_date', 'column_total', 'column_identifier', 'column_environment', 'column_status', 'column_message', 'column_action', 'entry_status', 'button_setting', 'button_resend', 'button_xml', 'button_filter') as $key) {
+		foreach (array('text_no_results', 'text_all', 'text_confirm_resend', 'text_active_note', 'column_invoice', 'column_type', 'column_customer', 'column_date', 'column_total', 'column_identifier', 'column_environment', 'column_status', 'column_message', 'column_action', 'entry_status', 'button_setting', 'button_resend', 'button_xml', 'button_filter') as $key) {
 			$this->data[$key] = $this->language->get($key);
 		}
 
@@ -150,7 +151,7 @@ class ControllerTicketbaiTicketbai extends Controller {
 
 		$this->data['heading_title'] = $this->language->get('heading_setting');
 
-		foreach (array('text_yes', 'text_no', 'text_araba', 'text_bizkaia', 'text_gipuzkoa', 'text_test', 'text_production', 'text_verifactu_note', 'text_certificate_note', 'text_license_note', 'text_requirements_ok', 'entry_active', 'entry_territory', 'entry_environment', 'entry_license', 'entry_developer_nif', 'entry_self_employed', 'entry_epigraph', 'entry_exempt_reason', 'entry_foreign_operation', 'text_delivery', 'text_services', 'button_save', 'button_cancel') as $key) {
+		foreach (array('text_yes', 'text_no', 'text_araba', 'text_bizkaia', 'text_gipuzkoa', 'text_test', 'text_production', 'text_active_note', 'text_certificate_note', 'text_ca_bundle_help', 'entry_ca_bundle', 'text_license_note', 'text_requirements_ok', 'entry_active', 'entry_territory', 'entry_environment', 'entry_license', 'entry_developer_nif', 'entry_self_employed', 'entry_epigraph', 'entry_exempt_reason', 'entry_foreign_operation', 'text_delivery', 'text_services', 'button_save', 'button_cancel') as $key) {
 			$this->data[$key] = $this->language->get($key);
 		}
 
@@ -223,6 +224,38 @@ class ControllerTicketbaiTicketbai extends Controller {
 			} else {
 				$json['error'] = $result['message'];
 			}
+		}
+
+		$this->response->addHeader('Content-Type: application/json');
+		$this->response->setOutput(json_encode($json));
+	}
+
+	// Boton "Reenviar a TicketBAI" de la pestana TicketBAI de la ficha de factura (sale/invoice).
+	// A diferencia de resend(), si la factura aun no se firmo (TicketBAI se activo despues, o
+	// fallo antes de firmar) la firma y la envia.
+	public function invoiceResend() {
+		$this->load->language('sale/invoice');
+		$this->language->load('ticketbai/ticketbai');
+
+		$json = array();
+
+		if (!$this->user->hasPermission('modify', 'sale/invoice')) {
+			$json['error'] = $this->language->get('error_permission');
+		} else {
+			$invoice_id = isset($this->request->get['invoice_id']) ? (int)$this->request->get['invoice_id'] : 0;
+
+			$this->load->model('ticketbai/ticketbai');
+
+			if (!$this->model_ticketbai_ticketbai->isActive()) {
+				$result = array('success' => false, 'message' => $this->language->get('error_territory'));
+			} else {
+				$result = $this->model_ticketbai_ticketbai->sendInvoice($invoice_id);
+			}
+
+			$json['success'] = $result['success'];
+			$json['message'] = $result['message'];
+
+			$json = array_merge($json, $this->model_ticketbai_ticketbai->getInfo($invoice_id));
 		}
 
 		$this->response->addHeader('Content-Type: application/json');
