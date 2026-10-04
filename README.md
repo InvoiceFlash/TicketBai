@@ -152,3 +152,9 @@ simulada (sin red). Se hicieron en PHP 8.3 y en PHP 5.6, para los tres territori
   el QR TBAI, pero no el texto del identificador.
 - Solo se envían las facturas que pasan por los hooks de arriba (alta, borrador, albarán, Anular y el
   botón de la ficha).
+
+## Licencia
+
+GNU GPL v3, la misma que InvoiceFlash (ver `LICENSE`). Parte de `system/library/ticketbai.php` se basa
+en [barnetik/ticketbai](https://github.com/Barnetik/tbai-php-lib) (GPL-3.0-or-later), compatible con
+esta licencia.
